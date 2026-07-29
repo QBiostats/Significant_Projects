@@ -1,0 +1,173 @@
+---
+title: "Clinical Survival Analysis"
+author: "Qian Stefens"
+date: "`r Sys.Date()`"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(survival)
+library(gtsummary)
+library(ggplot2)
+library(car)
+library(dplyr)
+library(patchwork)
+library(tibble)
+library(knitr)
+
+veteran <- survival::veteran
+```
+# Introduction
+This report evaluates clinical survival data from the veteran lung cancer trial (from the R survival package). The analysis aims to answer two key research questions: "Does histological cell type significantly influence patient survival time?" and "Is there a significant difference in survival times between the standard treatment group and the experimental test treatment group?"
+
+# Exploratory Data Analysis
+```{r echo=FALSE}
+str(veteran)
+```
+
+```{r echo=FALSE}
+custom_colors <- scale_fill_manual(values = c("lightblue", "lightgreen"), labels = c("Standard", "Test"))
+
+p1 <- ggplot(veteran, aes(x = factor(celltype), y = time, fill = factor(trt))) +
+  geom_boxplot() +
+  custom_colors +
+  labs(x = "Cell Type", y = "Survival Time (Days)", title = "Survival Time (Days)", fill = "Treatment Group") +
+  theme_minimal()
+
+p2 <- ggplot(veteran, aes(x = factor(celltype), y = karno, fill = factor(trt))) +
+  geom_boxplot() +
+  labs(x = "Cell Type", y = "Karnofsky Performance Score", fill = "Treatment Group", title = "Karnofsky Performance Score") +
+  custom_colors +
+  theme_minimal()
+
+p3 <- ggplot(veteran, aes(x = factor(celltype), y = diagtime, fill = factor(trt))) +
+  geom_boxplot() +
+  custom_colors +
+  labs(x = "Cell Type", y = "Time Since Diagnosis (Months)", fill = "Treatment Group", title = "Time Since Diagnosis (Months)") +
+  theme_minimal()
+
+p4 <- ggplot(veteran, aes(x = factor(celltype), y = age, fill = factor(trt))) +
+  geom_boxplot() +
+  custom_colors +
+  labs(x = "Cell Type", y = "Age (Years)", title = "Age (Years)", fill = "Treatment Group") + 
+  theme_minimal()
+
+(p1 | p2) / (p3 | p4) + 
+  plot_layout(guides = "collect") &
+  theme(legend.position = "bottom",
+    plot.title = element_text(size = 9, face = "bold"),
+    axis.title = element_text(size = 7),
+    axis.text = element_text(size = 7)
+  )
+```
+
+```{r echo=FALSE}
+ggplot(veteran, aes(x = factor(trt), fill = factor(prior))) +
+  geom_bar(position = "fill", width = 0.6) +
+  scale_y_continuous(labels = scales::percent) +
+  scale_x_discrete(labels = c("1" = "Standard", "2" = "Test")) +
+  scale_fill_manual(values = c("0" = "lightblue", "10" = "lightgreen"), labels = c("No", "Yes")) +
+  labs(x = "Treatment Group", y = "Percentage", fill = "Prior Therapy") +
+  theme_minimal()
+```
+
+```{r echo=FALSE}
+table_1 <- veteran|>
+  tbl_summary(by = trt, missing = "no") |>
+  add_n() |>
+  modify_header(label = "**Variable**") |>
+  bold_labels()
+
+table_1
+```
+The distributions of Karnofsky score, age, and prior seem to be well balanced between the cell types and treatment groups. 
+
+# Univariate Survival Analysis - Kaplan Meier
+```{r echo=FALSE}
+km <- survfit(Surv(time, status)~celltype,veteran)
+
+plot(km, xlab = "Survival Time (Days)", ylab = "Cumulative Survival", main = "Survival Time (Days)", col = c("lightblue","lightgreen","lightpink","purple"), lwd = 2)
+legend("topright",c("squamous", "smallcell", "adeno", "large"), col = c("lightblue","lightgreen","lightpink","purple"), lwd = 2, bty = "n")
+```
+
+The Kaplan-Meier survival curves indicate that patients with squamous cell type experience longer survival times compared to those with large, adeno, or small cell types. And more specifically, those with adeno or small cell show the poorest prognosis. A log-rank test confirms that overall survival significantly differs across the four histological cell types (\(\chi^2 = 25.4\), \(df = 3\), \(p < 0.001\)).
+
+```{r include=FALSE}
+LogRankt <- survdiff(Surv(time,status)~celltype, data = veteran)
+LogRankt
+```
+```{r echo=FALSE}
+chisq_cell <- LogRankt$chisq
+df_cell <- length(LogRankt$n) - 1
+pval_cell <- 1 - pchisq(chisq_cell, df = df_cell)
+
+table_logrank_cell <- data.frame(
+  "Chi-Square" = round(chisq_cell, 2),
+  "df" = df_cell,
+  "p-value" = format.pval(pval_cell, digits = 3, eps = 0.001),
+  check.names = FALSE
+)
+
+kable(table_logrank_cell, align = "ccc")
+```
+
+```{r echo=FALSE}
+km2 <- survfit(Surv(time,status)~trt,data = veteran)
+
+plot(km2, xlab = "Survival Time (Days)", ylab = "Cumulative Survival", main = "Survival Time (Days)", col = c("lightblue","lightgreen"), lwd = 2)
+legend("topright", c("standard group", "test group"), col = c("lightblue","lightgreen"), lwd = 2, bty = "n")
+```
+
+The kaplan-Meier survival curves for the standard and test treatment groups overlap fairly closely. A log-rank test indicates that no statistically significant difference in overall survival between the two treatments is found (\(\chi^2 = 0.0\), \(df = 1\), \(p = 0.928\)).
+```{r echo=FALSE}
+LR_trt <- survdiff(Surv(time,status)~trt, data = veteran)
+
+chisq_trt <- LR_trt$chisq
+df_trt <- length(LR_trt$n) - 1
+pval_trt <- 1 - pchisq(chisq_trt, df = df_trt)
+
+table_logrank_trt <- data.frame(
+  "Chi-Square" = round(chisq_trt, 2),
+  "df" = df_trt,
+  "p-value" = format.pval(pval_trt, digits = 3, eps = 0.001),
+  check.names = FALSE
+)
+
+kable(table_logrank_trt, align = "ccc")
+```
+
+# Multivariate Cox Regression
+A multivariate Cox Regression was conducted to assess the treatment effect while adjusting for the other covariates. Initial analysis via Schoenfeld residuals showed that celltype (\(p = 0.002\)) and Karnofsky performance score (\(p < 0.001\)) violated the proportional hazards assumption. To resolve this, the model was adjusted by stratifying for the Karnofsky performance score. This successfully restored the global model assumption (\(p = 0.053\)). 
+```{r include=FALSE}
+mult_cox <- coxph(Surv(time,status)~trt + celltype+ karno + diagtime + age + prior, data = veteran) 
+strat_mult_cox <- coxph(Surv(time,status)~trt + celltype+ strata(karno) + diagtime + age + prior, data = veteran) 
+```
+
+```{r echo=FALSE}
+t1 <- as.data.frame(cox.zph(mult_cox)$table) |> rownames_to_column("term")
+t2 <- as.data.frame(cox.zph(strat_mult_cox)$table) |> rownames_to_column("term")
+
+left_join(t1, t2, by = "term", suffix = c(" (Initial)", " (Stratified)")) |>
+  mutate(across(where(is.numeric), ~ round(., 3))) |>
+  kable(align = "ccccccc")
+```
+
+
+```{r echo=FALSE, warning=FALSE}
+vif(strat_mult_cox)
+```
+The Generalized Variance Inflation Factors (GVIF) confirmed the absence of multicollinearity, with all values falling below 1.32.The final adjusted model parameters are presented below. After controlling for all the covariates, the test treatment does not show a significant increase in survival compared to the standard treatment (\(HR = 1.10\), \(95\%\text{ CI: } [0.72, 1.68]\), \(p = 0.672\)). However, histological cell type remains a powerful independent predictor of mortality. Compared to the squamous reference group, patients with adeno (\(HR = 3.31\), \(p < 0.001\)) and small cell carcinoma (\(HR = 2.50\), \(p = 0.003\)) show a significantly higher risk of death.
+```{r echo=FALSE}
+table_strat_multcox <- strat_mult_cox |>
+  tbl_regression(exponentiate = TRUE, pvalue_fun = label_style_pvalue(digits = 3)) |>
+  bold_labels()
+
+table_strat_multcox
+```
+
+# Conclusion
+The survival analysis demonstrates that the test treatment provides no statistically signficant advantage in survival time compared to the standard treatment (\(p = 0.672\)). Instead, patient prognosis is more driven by tumor histology. Specifically, tumor cell types such as adeno and small cell type are associated with a large increase in the hazard of death compared to squamous cell type (\(p \le 0.003\)).
